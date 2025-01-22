@@ -3,9 +3,14 @@ from flask_cors import CORS
 import requests
 from typing import Optional
 import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Set up logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -16,8 +21,8 @@ BASE_API_URL = "https://api.langflow.astra.datastax.com"
 LANGFLOW_ID = "9a651376-1593-4fec-ae77-58a912a5032e"
 FLOW_ID = "01330d3c-d0e2-439c-a69f-8c6071ed99cf"
 
-# Put your token here between the quotes
-APPLICATION_TOKEN = "AstraCS:FeYitNOMPNQuEZHDoCCGpDca:84784d04bebbd576931b9df3499114dea1adf911a821eccda34d3b180d4910d4"
+# Get token from environment variable
+APPLICATION_TOKEN = os.getenv('APPLICATION_TOKEN')
 
 def validate_token():
     """Validate that the token is properly configured"""
@@ -51,15 +56,9 @@ def run_flow(message: str,
             "Authorization": f"Bearer {application_token}"
         }
         
-        logger.debug(f"Making request to API:")
-        logger.debug(f"URL: {api_url}")
-        logger.debug(f"Token length: {len(application_token) if application_token else 0}")
-        logger.debug(f"Payload: {payload}")
+        logger.info(f"Making request to API: {api_url}")
         
         response = requests.post(api_url, json=payload, headers=headers)
-        
-        logger.debug(f"Response status code: {response.status_code}")
-        logger.debug(f"Response content: {response.text[:100]}...")
         
         if response.status_code != 200:
             raise Exception(f"API returned status code {response.status_code}: {response.text}")
@@ -76,13 +75,12 @@ def serve_html():
 @app.route('/chat', methods=['POST'])
 def chat():
     try:
-        logger.debug("Received chat request")
+        logger.info("Received chat request")
         
         if not validate_token():
-            return jsonify({'error': 'Please set your application token in the server.py file'}), 500
+            return jsonify({'error': 'Application token not configured'}), 500
             
         data = request.json
-        logger.debug(f"Request data: {data}")
         
         message = data.get('message')
         endpoint = data.get('endpoint', FLOW_ID)
@@ -97,7 +95,7 @@ def chat():
             application_token=APPLICATION_TOKEN
         )
         
-        logger.debug("Successfully processed request")
+        logger.info("Successfully processed request")
         return jsonify({
             'response': response
         })
@@ -106,14 +104,15 @@ def chat():
         logger.error(f"Error processing request: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+# Health check endpoint for Render
+@app.route('/health')
+def health_check():
+    return jsonify({'status': 'healthy'}), 200
+
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
     if validate_token():
         logger.info("Token validation successful, starting server...")
-        app.run(debug=True, port=5000)
+        app.run(host='0.0.0.0', port=port)
     else:
         logger.error("Server not started due to token configuration issue")
-        print("\n" + "="*50)
-        print("ERROR: Please configure your application token!")
-        print("Open server.py and paste your token in the APPLICATION_TOKEN variable")
-        print("="*50 + "\n")
-        
