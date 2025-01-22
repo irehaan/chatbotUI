@@ -4,20 +4,19 @@ import requests
 from typing import Optional
 import logging
 import os
+import traceback
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-CORS(app, resources={
-    r"/*": {
-        "origins": ["https://lms-chatbot.onrender.com", "http://localhost:5000"],
-        "methods": ["GET", "POST"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
+# Enable CORS for all origins
+CORS(app)
 
 # Configuration variables
 BASE_API_URL = "https://api.langflow.astra.datastax.com"
@@ -31,9 +30,6 @@ def validate_token():
     """Validate that the token is properly configured"""
     if not APPLICATION_TOKEN or APPLICATION_TOKEN.strip() == "":
         logger.error("Token is empty or not set")
-        return False
-    if "<" in APPLICATION_TOKEN or ">" in APPLICATION_TOKEN:
-        logger.error("Token contains placeholder characters")
         return False
     return True
 
@@ -60,15 +56,22 @@ def run_flow(message: str,
         }
         
         logger.info(f"Making request to API: {api_url}")
+        logger.info(f"Payload: {payload}")
         
         response = requests.post(api_url, json=payload, headers=headers)
+        
+        # Log response details
+        logger.info(f"Response status code: {response.status_code}")
+        logger.info(f"Response headers: {dict(response.headers)}")
+        logger.info(f"Response content: {response.text[:200]}...")  # First 200 chars
         
         if response.status_code != 200:
             raise Exception(f"API returned status code {response.status_code}: {response.text}")
             
         return response.json()
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Unexpected error in run_flow: {str(e)}")
+        logger.error(traceback.format_exc())
         raise
 
 @app.route('/')
@@ -79,11 +82,22 @@ def serve_html():
 def chat():
     try:
         logger.info("Received chat request")
+        logger.info(f"Request headers: {dict(request.headers)}")
+        
+        # Log request body
+        try:
+            request_data = request.get_json()
+            logger.info(f"Request body: {request_data}")
+        except Exception as e:
+            logger.error(f"Error parsing request body: {e}")
+            return jsonify({'error': 'Invalid JSON'}), 400
         
         if not validate_token():
             return jsonify({'error': 'Application token not configured'}), 500
             
         data = request.json
+        if not data or 'message' not in data:
+            return jsonify({'error': 'Message is required'}), 400
         
         message = data.get('message')
         endpoint = data.get('endpoint', FLOW_ID)
@@ -104,10 +118,11 @@ def chat():
         })
         
     except Exception as e:
-        logger.error(f"Error processing request: {str(e)}", exc_info=True)
+        logger.error(f"Error processing request: {str(e)}")
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
-# Health check endpoint for Render
+# Health check endpoint
 @app.route('/health')
 def health_check():
     return jsonify({'status': 'healthy'}), 200

@@ -4,9 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>Langflow Chat Interface</title>
-  
-  <!-- Removed the Lottie Player CDN script -->
-  <!-- <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script> -->
 
   <style>
     body {
@@ -139,7 +136,6 @@
       background-color: #013A63;
     }
 
-    /* Loading container (hidden by default) */
     .loading {
       display: none;
       justify-content: center;
@@ -147,7 +143,6 @@
       padding: 5px;
     }
 
-    /* Custom spinner */
     .spinner {
       width: 30px;
       height: 30px;
@@ -169,7 +164,6 @@
       <div class="message bot-message">Hello! How can I help you today?</div>
     </div>
 
-    <!-- Loading container with a custom spinner -->
     <div class="loading" id="loading">
       <div class="spinner"></div>
     </div>
@@ -186,11 +180,17 @@
     const chatMessages = document.getElementById('chat-messages');
     const loadingIndicator = document.getElementById('loading');
 
-    const API_URL = 'https://lms-chatbot.onrender.com';
+    // Dynamically determine the API URL based on the environment
+    const API_URL = window.location.hostname === 'localhost' 
+      ? 'http://localhost:5000/chat'
+      : `${window.location.origin}/chat`;
+
+    console.log('Using API URL:', API_URL);
 
     function extractMessage(response) {
       try {
-        // Adjust to your API response structure
+        console.log('Extracting message from response:', response);
+        
         if (response.response?.outputs?.[0]?.outputs?.[0]?.artifacts?.message) {
           return response.response.outputs[0].outputs[0].artifacts.message;
         }
@@ -199,47 +199,55 @@
           return response.response.outputs[0].outputs[0].results.message.text;
         }
 
-        return JSON.stringify(response);
+        if (response.error) {
+          return `Error: ${response.error}`;
+        }
+
+        return JSON.stringify(response, null, 2);
       } catch (error) {
         console.error('Error extracting message:', error);
-        return 'Error processing response';
+        return 'Error processing response: ' + error.message;
       }
     }
 
     function formatMessage(message) {
-      // Handle bold text
-      message = message.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      try {
+        // Handle bold text
+        message = message.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
 
-      // Handle headers (remove # symbols)
-      message = message.replace(/^### (.*$)/gm, '<h3>$1</h3>');
-      message = message.replace(/^## (.*$)/gm, '<h2>$1</h2>');
-      message = message.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+        // Handle headers
+        message = message.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+        message = message.replace(/^## (.*$)/gm, '<h2>$1</h2>');
+        message = message.replace(/^# (.*$)/gm, '<h1>$1</h1>');
 
-      // Handle numbered lists
-      message = message.replace(/^\d+\. (.*$)/gm, '<li>$1</li>');
-      let hasNumberedList = message.match(/^\d+\. /gm);
-      if (hasNumberedList) {
-        message = message.replace(/(<li>.*<\/li>\n?)+/g, '<ol>$&</ol>');
+        // Handle numbered lists
+        message = message.replace(/^\d+\. (.*$)/gm, '<li>$1</li>');
+        let hasNumberedList = message.match(/^\d+\. /gm);
+        if (hasNumberedList) {
+          message = message.replace(/(<li>.*<\/li>\n?)+/g, '<ol>$&</ol>');
+        }
+
+        // Handle bullet points
+        message = message.replace(/^[-*] (.*$)/gm, '<li>$1</li>');
+        let hasBulletList = message.match(/^[-*] /gm);
+        if (hasBulletList) {
+          message = message.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+        }
+
+        // Handle paragraphs
+        const paragraphs = message.split(/\n\n+/);
+        return paragraphs
+          .map((p) => {
+            if (p.startsWith('<h') || p.startsWith('<ul>') || p.startsWith('<ol>')) {
+              return p;
+            }
+            return `<p>${p.trim()}</p>`;
+          })
+          .join('');
+      } catch (error) {
+        console.error('Error formatting message:', error);
+        return message; // Return original message if formatting fails
       }
-
-      // Handle bullet points
-      message = message.replace(/^[-*] (.*$)/gm, '<li>$1</li>');
-      let hasBulletList = message.match(/^[-*] /gm);
-      if (hasBulletList) {
-        message = message.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-      }
-
-      // Handle paragraphs
-      const paragraphs = message.split(/\n\n+/);
-      return paragraphs
-        .map((p) => {
-          // If a paragraph starts with list or header tags, don't wrap in <p>
-          if (p.startsWith('<h') || p.startsWith('<ul>') || p.startsWith('<ol>')) {
-            return p;
-          }
-          return `<p>${p.trim()}</p>`;
-        })
-        .join('');
     }
 
     function addMessage(message, isUser, isError = false) {
@@ -251,7 +259,6 @@
       if (!isUser) {
         messageDiv.innerHTML = formatMessage(message);
       } else {
-        // For user messages, avoid inserting HTML
         messageDiv.textContent = message;
       }
 
@@ -265,13 +272,17 @@
 
       addMessage(message, true);
       messageInput.value = '';
-      loadingIndicator.style.display = 'flex'; // Show the spinner
+      loadingIndicator.style.display = 'flex';
+      sendButton.disabled = true;
 
       try {
+        console.log('Sending request to:', API_URL);
+        
         const response = await fetch(API_URL, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
           },
           body: JSON.stringify({
             message: message,
@@ -281,25 +292,41 @@
           })
         });
 
-        const data = await response.json();
-        console.log('Server response:', data);
+        console.log('Response status:', response.status);
+        
+        const responseText = await response.text();
+        console.log('Raw response:', responseText);
+
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch (e) {
+          throw new Error(`Failed to parse response as JSON: ${responseText.substring(0, 100)}...`);
+        }
+
+        console.log('Parsed response:', data);
 
         const extractedMessage = extractMessage(data);
         addMessage(extractedMessage, false);
       } catch (error) {
-        console.error('Error:', error);
+        console.error('Error details:', error);
         addMessage(`Error: ${error.message}`, false, true);
       } finally {
-        loadingIndicator.style.display = 'none'; // Hide the spinner
+        loadingIndicator.style.display = 'none';
+        sendButton.disabled = false;
       }
     }
 
     sendButton.addEventListener('click', sendMessage);
     messageInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
         sendMessage();
       }
     });
+
+    // Disable form submission
+    document.addEventListener('submit', (e) => e.preventDefault());
   </script>
 </body>
 </html>
