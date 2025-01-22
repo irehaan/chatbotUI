@@ -10,7 +10,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+
+CORS(app, resources={
+    r"/*": {
+        "origins": ["https://lms-chatbot.onrender.com", "http://localhost:5000"],
+        "methods": ["GET", "POST"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # Configuration variables
 BASE_API_URL = "https://api.langflow.astra.datastax.com"
