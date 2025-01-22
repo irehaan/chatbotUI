@@ -5,10 +5,6 @@ from typing import Optional
 import logging
 import os
 
-
-# Load environment variables
-load_dotenv()
-
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,7 +17,7 @@ BASE_API_URL = "https://api.langflow.astra.datastax.com"
 LANGFLOW_ID = "9a651376-1593-4fec-ae77-58a912a5032e"
 FLOW_ID = "01330d3c-d0e2-439c-a69f-8c6071ed99cf"
 
-# Get token from environment variable
+# Application token (hardcoded)
 APPLICATION_TOKEN = "AstraCS:FeYitNOMPNQuEZHDoCCGpDca:84784d04bebbd576931b9df3499114dea1adf911a821eccda34d3b180d4910d4"
 
 def validate_token():
