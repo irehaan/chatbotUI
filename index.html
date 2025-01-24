@@ -182,33 +182,10 @@
 
     // Dynamically determine the API URL based on the environment
     const API_URL = window.location.hostname === 'localhost' 
-      ? 'http://localhost:5000/chat'
-      : `${window.location.origin}/chat`;
+      ? 'http://localhost:5000/chat-stream'
+      : `${window.location.origin}/chat-stream`;
 
     console.log('Using API URL:', API_URL);
-
-    function extractMessage(response) {
-      try {
-        console.log('Extracting message from response:', response);
-        
-        if (response.response?.outputs?.[0]?.outputs?.[0]?.artifacts?.message) {
-          return response.response.outputs[0].outputs[0].artifacts.message;
-        }
-        
-        if (response.response?.outputs?.[0]?.outputs?.[0]?.results?.message?.text) {
-          return response.response.outputs[0].outputs[0].results.message.text;
-        }
-
-        if (response.error) {
-          return `Error: ${response.error}`;
-        }
-
-        return JSON.stringify(response, null, 2);
-      } catch (error) {
-        console.error('Error extracting message:', error);
-        return 'Error processing response: ' + error.message;
-      }
-    }
 
     function formatMessage(message) {
       try {
@@ -250,20 +227,25 @@
       }
     }
 
-    function addMessage(message, isUser, isError = false) {
+    function addMessage(message, isUser, isError = false, isStreaming = false) {
       const messageDiv = document.createElement('div');
       messageDiv.className = `message ${
         isUser ? 'user-message' : isError ? 'error-message' : 'bot-message'
       }`;
 
       if (!isUser) {
-        messageDiv.innerHTML = formatMessage(message);
+        if (isStreaming) {
+          messageDiv.innerHTML = '';
+        } else {
+          messageDiv.innerHTML = formatMessage(message);
+        }
       } else {
         messageDiv.textContent = message;
       }
 
       chatMessages.appendChild(messageDiv);
       chatMessages.scrollTop = chatMessages.scrollHeight;
+      return messageDiv;
     }
 
     async function sendMessage() {
@@ -276,13 +258,11 @@
       sendButton.disabled = true;
 
       try {
-        console.log('Sending request to:', API_URL);
-        
         const response = await fetch(API_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Accept': 'text/event-stream'
           },
           body: JSON.stringify({
             message: message,
@@ -292,22 +272,39 @@
           })
         });
 
-        console.log('Response status:', response.status);
-        
-        const responseText = await response.text();
-        console.log('Raw response:', responseText);
+        const botMessageEl = addMessage('', false, false, true);
 
-        let data;
-        try {
-          data = JSON.parse(responseText);
-        } catch (e) {
-          throw new Error(`Failed to parse response as JSON: ${responseText.substring(0, 100)}...`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullResponse = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const events = chunk.split('\n\n');
+
+          for (const event of events) {
+            if (event.trim()) {
+              try {
+                const parsedEvent = JSON.parse(event);
+                
+                if (parsedEvent.content) {
+                  fullResponse += parsedEvent.content;
+                  botMessageEl.innerHTML = formatMessage(fullResponse);
+                  chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+
+                if (parsedEvent.complete || parsedEvent.error) {
+                  break;
+                }
+              } catch (e) {
+                console.error('Error parsing event:', e);
+              }
+            }
+          }
         }
-
-        console.log('Parsed response:', data);
-
-        const extractedMessage = extractMessage(data);
-        addMessage(extractedMessage, false);
       } catch (error) {
         console.error('Error details:', error);
         addMessage(`Error: ${error.message}`, false, true);

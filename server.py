@@ -1,10 +1,11 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import requests
 from typing import Optional
 import logging
 import os
 import traceback
+import json
 
 # Set up logging
 logging.basicConfig(
@@ -74,6 +75,42 @@ def run_flow(message: str,
         logger.error(traceback.format_exc())
         raise
 
+def run_flow_stream(message: str,
+    endpoint: str,
+    output_type: str = "chat",
+    input_type: str = "chat",
+    application_token: Optional[str] = None):
+    """
+    Run a flow with streaming response.
+    """
+    try:
+        api_url = f"{BASE_API_URL}/lf/{LANGFLOW_ID}/api/v1/run/{endpoint}"
+        
+        payload = {
+            "input_value": message,
+            "output_type": output_type,
+            "input_type": input_type,
+        }
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {application_token}",
+            "Accept": "text/event-stream"
+        }
+        
+        logger.info(f"Making streaming request to API: {api_url}")
+        
+        response = requests.post(api_url, json=payload, headers=headers, stream=True)
+        
+        if response.status_code != 200:
+            raise Exception(f"API returned status code {response.status_code}: {response.text}")
+        
+        return response
+    except Exception as e:
+        logger.error(f"Unexpected error in run_flow_stream: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
+
 @app.route('/')
 def serve_html():
     return send_from_directory('.', 'index.html')
@@ -119,6 +156,75 @@ def chat():
         
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/chat-stream', methods=['POST'])
+def chat_stream():
+    try:
+        logger.info("Received chat stream request")
+        
+        if not validate_token():
+            return jsonify({'error': 'Application token not configured'}), 500
+            
+        data = request.json
+        if not data or 'message' not in data:
+            return jsonify({'error': 'Message is required'}), 400
+        
+        message = data.get('message')
+        endpoint = data.get('endpoint', FLOW_ID)
+        output_type = data.get('output_type', 'chat')
+        input_type = data.get('input_type', 'chat')
+        
+        def generate():
+            try:
+                response = run_flow_stream(
+                    message=message,
+                    endpoint=endpoint,
+                    output_type=output_type,
+                    input_type=input_type,
+                    application_token=APPLICATION_TOKEN
+                )
+                
+                full_response = ""
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            decoded_line = line.decode('utf-8')
+                            if decoded_line.startswith('data: '):
+                                try:
+                                    json_data = json.loads(decoded_line[6:])
+                                    
+                                    # Extract the incremental text
+                                    increment = ""
+                                    if json_data.get('outputs', []) and len(json_data['outputs'][0].get('outputs', [])) > 0:
+                                        chunk = json_data['outputs'][0]['outputs'][0]
+                                        
+                                        # Try different possible locations for the chunk
+                                        if chunk.get('artifacts', {}).get('message'):
+                                            increment = chunk['artifacts']['message']
+                                        elif chunk.get('results', {}).get('message', {}).get('text'):
+                                            increment = chunk['results']['message']['text']
+                                    
+                                    if increment:
+                                        full_response += increment
+                                        yield json.dumps({'content': increment}) + '\n\n'
+                                except json.JSONDecodeError:
+                                    logger.error(f"Could not parse JSON from line: {decoded_line}")
+                        except Exception as parse_error:
+                            logger.error(f"Error parsing stream line: {parse_error}")
+            
+                # Send full response as a final event
+                yield json.dumps({'complete': True, 'content': full_response}) + '\n\n'
+            
+            except Exception as e:
+                logger.error(f"Stream generation error: {e}")
+                yield json.dumps({'error': str(e)}) + '\n\n'
+        
+        return Response(generate(), mimetype='text/event-stream')
+        
+    except Exception as e:
+        logger.error(f"Error processing stream request: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
